@@ -362,6 +362,8 @@ sc_screen_init(struct sc_screen *screen,
     screen->maximized = false;
     screen->minimized = false;
     screen->mouse_capture_key_pressed = 0;
+    screen->paused = false;
+    screen->resume_frame = NULL;
 
     screen->req.x = params->window_x;
     screen->req.y = params->window_y;
@@ -577,6 +579,23 @@ sc_screen_set_orientation(struct sc_screen *screen,
     sc_screen_render(screen, true);
 }
 
+void
+sc_screen_switch_pause(struct sc_screen *screen) {
+    screen->paused = !screen->paused;
+    if (screen->paused) {
+        LOGI("Display screen paused");
+    } else {
+        LOGI("Display screen unpaused");
+        if (screen->resume_frame) {
+            // On unpause, refresh the screen with the current frame
+            av_frame_free(&screen->frame);
+            screen->frame = screen->resume_frame;
+            screen->resume_frame = NULL;
+            sc_screen_render(screen, true);
+        }
+    }
+}
+
 static bool
 sc_screen_init_size(struct sc_screen *screen) {
     // Before first frame
@@ -615,6 +634,20 @@ prepare_for_frame(struct sc_screen *screen, struct sc_size new_frame_size) {
 
 static bool
 sc_screen_update_frame(struct sc_screen *screen) {
+    if (screen->paused) {
+        if (!screen->resume_frame) {
+            screen->resume_frame = av_frame_alloc();
+            if (!screen->resume_frame) {
+                LOG_OOM();
+                return false;
+            }
+        } else {
+            av_frame_unref(screen->resume_frame);
+        }
+        sc_frame_buffer_consume(&screen->fb, screen->resume_frame);
+        return true;
+    }
+
     av_frame_unref(screen->frame);
     sc_frame_buffer_consume(&screen->fb, screen->frame);
     AVFrame *frame = screen->frame;
